@@ -59,7 +59,7 @@ pipeline {
             }
         }
 
-        stage('SonarQube Scan') {
+stage('SonarQube Scan') {
     steps {
         withSonarQubeEnv('SonarQube') {
             script {
@@ -69,8 +69,9 @@ pipeline {
                       -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                       -Dsonar.sources=backend,frontend/src \
                       -Dsonar.tests=backend/tests \
-                      -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
-                      -Dsonar.exclusions=node_modules/**,dist/**,build/**,.next/**
+                      -Dsonar.test.inclusions=backend/tests/**/*.js \
+                      -Dsonar.exclusions=backend/tests/**,node_modules/**,dist/**,build/**,.next/** \
+                      -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
                 """
             }
         }
