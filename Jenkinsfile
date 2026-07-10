@@ -60,20 +60,22 @@ pipeline {
         }
 
         stage('SonarQube Scan') {
-            steps {
-                withSonarQubeEnv('SonarQube') {
-                    sh """
-                        cd app && sonar-scanner \
-                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                          -Dsonar.sources=backend,frontend/src \
-                          -Dsonar.tests=backend/tests \
-                          -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
-                          -Dsonar.exclusions=node_modules/**,dist/**,build/**,.next/**
-                    """
-                }
+    steps {
+        withSonarQubeEnv('SonarQube') {
+            script {
+                def scannerHome = tool 'SonarScanner'
+                sh """
+                    cd app && ${scannerHome}/bin/sonar-scanner \
+                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                      -Dsonar.sources=backend,frontend/src \
+                      -Dsonar.tests=backend/tests \
+                      -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
+                      -Dsonar.exclusions=node_modules/**,dist/**,build/**,.next/**
+                """
             }
         }
-
+    }
+}
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
