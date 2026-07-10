@@ -40,3 +40,5 @@ describe('Transactions API', () => {
     const deleteRes = await request(app).delete(`/api/transactions/${id}`);
     expect(deleteRes.statusCode).toBe(200);
     expect(deleteRes.body.deleted).toBe(true);
+    });
+});
