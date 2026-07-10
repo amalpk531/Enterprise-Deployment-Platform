@@ -5,6 +5,18 @@
     update_cache: yes
 
 # ------------------------------------------------------------------
+# Common Utilities
+# ------------------------------------------------------------------
+
+- name: Install common utilities (git, unzip)
+  apt:
+    name:
+      - git
+      - unzip
+    state: present
+    update_cache: yes
+
+# ------------------------------------------------------------------
 # Jenkins Repository
 # ------------------------------------------------------------------
 
@@ -112,3 +124,19 @@
 - name: Display Jenkins initial password
   debug:
     msg: "{{ jenkins_initial_password.content | b64decode | trim }}"
+
+# ------------------------------------------------------------------
+# Node.js
+# ------------------------------------------------------------------
+
+- name: Install Node.js 22 repository
+  shell: |
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  args:
+    executable: /bin/bash
+
+- name: Install Node.js
+  apt:
+    name: nodejs
+    state: present
+    update_cache: yes

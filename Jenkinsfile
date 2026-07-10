@@ -3,11 +3,19 @@ pipeline {
 
     environment {
         DOCKERHUB_USERNAME = 'amalpk531'
-        IMAGE_NAME = 'enterprise-app'
-        FULL_IMAGE = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
-        DEV_DEPLOY_HOST = '10.0.1.20'   // Update from Terraform output
-        DEV_DEPLOY_USER = 'ubuntu'
-        SONAR_PROJECT_KEY = 'enterprise-app'
+        IMAGE_NAME          = 'enterprise-app'
+        FULL_IMAGE          = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
+
+        GITHUB_ORG          = 'amalpk531'
+        APP_REPO            = 'Enterprise-Deployment-Platform'
+        GITOPS_REPO         = 'Enterprise-Deployment-Platform-gitops'
+
+        // TODO: hardcoded for capstone scope — replace with Terraform output / SSM lookup later
+        DEV_DEPLOY_HOST     = '52.66.68.121'
+        DEV_DEPLOY_USER     = 'ubuntu'
+
+        SONAR_PROJECT_KEY   = 'enterprise-app'
+        NOTIFY_EMAIL        = 'amal18120007@gmail.com'
     }
 
     options {
@@ -118,11 +126,9 @@ pipeline {
             }
             post {
                 success {
-                    notifySlack("✅ Dev deployment succeeded for build #${BUILD_NUMBER}")
                     notifyEmail("Dev Deployment Success", "Application deployed to dev environment.")
                 }
                 failure {
-                    notifySlack("❌ Dev deployment failed for build #${BUILD_NUMBER}")
                     notifyEmail("Dev Deployment Failure", "Dev deployment failed. Check Jenkins logs.")
                 }
             }
@@ -131,7 +137,6 @@ pipeline {
         stage('Manual Approval') {
             steps {
                 script {
-                    notifySlack("⏳ Build #${BUILD_NUMBER} awaiting manual approval for production deployment.")
                     notifyEmail("Awaiting Approval", "Please approve production deployment in Jenkins.")
                     timeout(time: 30, unit: 'MINUTES') {
                         input message: 'Deploy to Production?', ok: 'Approve', submitterParameter: 'APPROVER'
@@ -148,14 +153,14 @@ pipeline {
                 withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
                     sh '''
                         rm -rf gitops-repo
-                        git clone --depth 1 https://${GITHUB_TOKEN}@github.com/amalpk531/Enterprise-Deployment-Platform-gitops.git gitops-repo
+                        git clone --depth 1 https://${GITHUB_TOKEN}@github.com/'''+"${GITHUB_ORG}/${GITOPS_REPO}"+'''.git gitops-repo
                         cd gitops-repo
                         git config user.email "jenkins@enterprise-platform.local"
                         git config user.name "Jenkins CI"
                         sed -i "s/^  tag: .*/  tag: \\"${BUILD_NUMBER}\\"/" helm/enterprise-app/values-prod.yaml
                         git add helm/enterprise-app/values-prod.yaml
                         git diff --cached --quiet || git commit -m "ci: bump prod image tag to ${BUILD_NUMBER} [skip ci]"
-                        git push https://${GITHUB_TOKEN}@github.com/amalpk531/Enterprise-Deployment-Platform-gitops.git main
+                        git push https://${GITHUB_TOKEN}@github.com/'''+"${GITHUB_ORG}/${GITOPS_REPO}"+'''.git main
                     '''
                 }
             }
@@ -163,6 +168,8 @@ pipeline {
 
         stage('Verify Prod Deployment') {
             steps {
+                // NOTE: requires Jenkins node's public IP added to the EKS cluster's
+                // public access CIDR allowlist, or this kubectl call will time out.
                 withCredentials([kubeconfigFile(credentialsId: 'eks-kubeconfig', variable: 'KUBECONFIG')]) {
                     sh """
                         kubectl -n argocd annotate application enterprise-app argocd.argoproj.io/refresh=hard --overwrite
@@ -174,11 +181,9 @@ pipeline {
             }
             post {
                 success {
-                    notifySlack("🚀 Production deployment succeeded for build #${BUILD_NUMBER}")
                     notifyEmail("Production Deployment Success", "Application deployed to production via Argo CD.")
                 }
                 failure {
-                    notifySlack("❌ Production deployment verification failed for build #${BUILD_NUMBER}")
                     notifyEmail("Production Deployment Failure", "Production deployment verification failed.")
                 }
             }
@@ -190,15 +195,8 @@ pipeline {
             cleanWs()
         }
         failure {
-            notifySlack("❌ Pipeline failed at ${env.STAGE_NAME}: build #${BUILD_NUMBER}")
             notifyEmail("Pipeline Failure", "Pipeline failed at stage: ${env.STAGE_NAME}")
         }
-    }
-}
-
-def notifySlack(String message) {
-    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK_URL')]) {
-        slackSend(color: 'good', message: "${message} (<${BUILD_URL}|Open>)", webhookURL: "${SLACK_WEBHOOK_URL}")
     }
 }
 
@@ -206,6 +204,6 @@ def notifyEmail(String subject, String body) {
     emailext(
         subject: "${subject} - ${env.JOB_NAME} #${BUILD_NUMBER}",
         body: "${body}\n\nView build: ${BUILD_URL}",
-        to: "${env.CHANGE_AUTHOR_EMAIL ?: 'devops@enterprise-platform.local'}"
+        to: "${env.CHANGE_AUTHOR_EMAIL ?: env.NOTIFY_EMAIL}"
     )
 }
