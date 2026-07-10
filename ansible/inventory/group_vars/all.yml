@@ -1,0 +1,32 @@
+---
+# WARNING: This file contains plaintext secrets for demo purposes.
+# In production, encrypt with: ansible-vault encrypt ansible/inventory/group_vars/all.yml
+
+# Docker
+docker_install_compose_plugin: true
+
+# SonarQube
+sonarqube_db_password: "sonarStrongPassword123!"
+sonarqube_db_user: "sonar"
+sonarqube_db_name: "sonarqube"
+sonarqube_version: "lts-community"
+postgres_version: "15"
+
+# Jenkins
+jenkins_admin_user: "admin"
+jenkins_admin_password: "jenkinsAdmin123!"
+jenkins_plugins:
+  - git
+  - workflow-aggregator
+  - pipeline-stage-view
+  - docker-workflow
+  - sonar
+  - kubernetes
+  - credentials-binding
+  - email-ext
+  - timestamper
+  - ws-cleanup
+  - ssh-agent
+
+# Project
+dockerhub_username: "amalpk531"

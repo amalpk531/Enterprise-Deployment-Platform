@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and replace open CIDRs before a real deployment.
+aws_region   = "ap-south-1"
+project_name = "enterprise-deployment-platform"
+key_name     = "_capstone"
+
+# Use your public IP/32 instead of 0.0.0.0/0.
+# Find it with: curl https://checkip.amazonaws.com
+allowed_ssh_cidr       = "203.0.113.10/32"
+allowed_jenkins_cidr   = "203.0.113.10/32"
+allowed_sonarqube_cidr = "203.0.113.10/32"

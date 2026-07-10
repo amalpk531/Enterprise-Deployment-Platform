@@ -1,0 +1,114 @@
+- name: Install Java 21
+  apt:
+    name: openjdk-21-jdk
+    state: present
+    update_cache: yes
+
+# ------------------------------------------------------------------
+# Jenkins Repository
+# ------------------------------------------------------------------
+
+- name: Ensure keyrings directory exists
+  file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Download Jenkins signing key
+  get_url:
+    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+    dest: /usr/share/keyrings/jenkins-keyring.asc
+    mode: "0644"
+    force: yes
+
+- name: Add Jenkins repository
+  apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+    filename: jenkins
+    state: present
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+# ------------------------------------------------------------------
+# Jenkins Installation
+# ------------------------------------------------------------------
+
+- name: Install Jenkins
+  apt:
+    name: jenkins
+    state: present
+
+- name: Enable and start Jenkins
+  service:
+    name: jenkins
+    enabled: yes
+    state: started
+
+# ------------------------------------------------------------------
+# Trivy
+# ------------------------------------------------------------------
+
+- name: Ensure gnupg is installed
+  apt:
+    name: gnupg
+    state: present
+
+- name: Download Trivy ASCII key
+  get_url:
+    url: https://aquasecurity.github.io/trivy-repo/deb/public.key
+    dest: /tmp/trivy-public.key
+    mode: "0644"
+    force: yes
+
+- name: Convert Trivy key to GPG keyring
+  shell: |
+    gpg --dearmor --yes -o /usr/share/keyrings/trivy.gpg /tmp/trivy-public.key
+  args:
+    creates: /usr/share/keyrings/trivy.gpg
+
+- name: Add Trivy repository
+  apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main"
+    filename: trivy
+    state: present
+
+- name: Update apt cache after adding Trivy repository
+  apt:
+    update_cache: yes
+
+- name: Install Trivy
+  apt:
+    name: trivy
+    state: present
+
+# ------------------------------------------------------------------
+# Verify Installation
+# ------------------------------------------------------------------
+
+- name: Verify Trivy installation
+  command: trivy --version
+  changed_when: false
+
+# ------------------------------------------------------------------
+# Jenkins Startup
+# ------------------------------------------------------------------
+
+- name: Wait for Jenkins to become available
+  uri:
+    url: http://localhost:8080/login
+    status_code: 200
+  register: jenkins_login
+  retries: 30
+  delay: 10
+  until: jenkins_login.status == 200
+
+- name: Read Jenkins initial admin password
+  slurp:
+    src: /var/lib/jenkins/secrets/initialAdminPassword
+  register: jenkins_initial_password
+
+- name: Display Jenkins initial password
+  debug:
+    msg: "{{ jenkins_initial_password.content | b64decode | trim }}"

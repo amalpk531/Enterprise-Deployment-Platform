@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and replace open CIDRs before a real deployment.
+aws_region   = "ap-south-1"
+project_name = "enterprise-deployment-platform"
+
+# Use your public IP/32 instead of 0.0.0.0/0.
+# Find it with: curl https://checkip.amazonaws.com
+allowed_eks_access_cidr = "203.0.113.10/32"

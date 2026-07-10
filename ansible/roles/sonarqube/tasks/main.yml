@@ -1,0 +1,38 @@
+---
+- name: Set vm.max_map_count for Elasticsearch
+  sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    state: present
+    reload: yes
+
+- name: Ensure Docker Compose directory exists
+  file:
+    path: /opt/sonarqube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Deploy SonarQube Docker Compose file
+  template:
+    src: docker-compose.yml.j2
+    dest: /opt/sonarqube/docker-compose.yml
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+
+- name: Start SonarQube with Docker Compose
+  command: docker compose up -d
+  args:
+    chdir: /opt/sonarqube
+  become_user: ubuntu
+
+- name: Wait for SonarQube to be healthy
+  uri:
+    url: "http://localhost:9000/api/system/status"
+    status_code: 200
+  register: sonar_status
+  until: sonar_status.status == 200
+  retries: 60
+  delay: 10

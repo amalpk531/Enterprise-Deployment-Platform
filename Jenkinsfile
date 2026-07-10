@@ -1,0 +1,211 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_USERNAME = 'amalpk531'
+        IMAGE_NAME = 'enterprise-app'
+        FULL_IMAGE = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
+        DEV_DEPLOY_HOST = '10.0.1.20'   // Update from Terraform output
+        DEV_DEPLOY_USER = 'ubuntu'
+        SONAR_PROJECT_KEY = 'enterprise-app'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('app/backend') {
+                    sh 'npm ci'
+                }
+                dir('app/frontend') {
+                    sh 'npm ci'
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('app/backend') {
+                    sh 'npm test'
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'app/backend/test-results.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('SonarQube Scan') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        cd app && sonar-scanner \
+                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                          -Dsonar.sources=backend,frontend/src \
+                          -Dsonar.tests=backend/tests \
+                          -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
+                          -Dsonar.exclusions=node_modules/**,dist/**,build/**,.next/**
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs --severity HIGH,CRITICAL --exit-code 1 --no-progress .'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    dockerImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}", "-f app/Dockerfile .")
+                }
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh "trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${FULL_IMAGE}:${BUILD_NUMBER}"
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    docker.withRegistry('', 'dockerhub-token') {
+                        dockerImage.push("${BUILD_NUMBER}")
+                        dockerImage.push("latest")
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Dev') {
+            steps {
+                sshagent(['dev-deploy-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
+                          "cd /opt/enterprise-app && \
+                           IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml pull && \
+                           IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml up -d"
+                    """
+                }
+            }
+            post {
+                success {
+                    notifySlack("✅ Dev deployment succeeded for build #${BUILD_NUMBER}")
+                    notifyEmail("Dev Deployment Success", "Application deployed to dev environment.")
+                }
+                failure {
+                    notifySlack("❌ Dev deployment failed for build #${BUILD_NUMBER}")
+                    notifyEmail("Dev Deployment Failure", "Dev deployment failed. Check Jenkins logs.")
+                }
+            }
+        }
+
+        stage('Manual Approval') {
+            steps {
+                script {
+                    notifySlack("⏳ Build #${BUILD_NUMBER} awaiting manual approval for production deployment.")
+                    notifyEmail("Awaiting Approval", "Please approve production deployment in Jenkins.")
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input message: 'Deploy to Production?', ok: 'Approve', submitterParameter: 'APPROVER'
+                    }
+                    echo "Approved by: ${env.APPROVER}"
+                    writeFile file: 'audit.log', text: "Build #${BUILD_NUMBER} approved by ${env.APPROVER} at ${new Date()}\n"
+                    archiveArtifacts artifacts: 'audit.log', allowEmptyArchive: false
+                }
+            }
+        }
+
+        stage('Update Prod Git Tag') {
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        rm -rf gitops-repo
+                        git clone --depth 1 https://${GITHUB_TOKEN}@github.com/amalpk531/Enterprise-Deployment-Platform-gitops.git gitops-repo
+                        cd gitops-repo
+                        git config user.email "jenkins@enterprise-platform.local"
+                        git config user.name "Jenkins CI"
+                        sed -i "s/^  tag: .*/  tag: \\"${BUILD_NUMBER}\\"/" helm/enterprise-app/values-prod.yaml
+                        git add helm/enterprise-app/values-prod.yaml
+                        git diff --cached --quiet || git commit -m "ci: bump prod image tag to ${BUILD_NUMBER} [skip ci]"
+                        git push https://${GITHUB_TOKEN}@github.com/amalpk531/Enterprise-Deployment-Platform-gitops.git main
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Prod Deployment') {
+            steps {
+                withCredentials([kubeconfigFile(credentialsId: 'eks-kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh """
+                        kubectl -n argocd annotate application enterprise-app argocd.argoproj.io/refresh=hard --overwrite
+                        sleep 30
+                        kubectl rollout status deployment/enterprise-app -n enterprise-app-prod --timeout=600s
+                        kubectl get pods -n enterprise-app-prod -o wide
+                    """
+                }
+            }
+            post {
+                success {
+                    notifySlack("🚀 Production deployment succeeded for build #${BUILD_NUMBER}")
+                    notifyEmail("Production Deployment Success", "Application deployed to production via Argo CD.")
+                }
+                failure {
+                    notifySlack("❌ Production deployment verification failed for build #${BUILD_NUMBER}")
+                    notifyEmail("Production Deployment Failure", "Production deployment verification failed.")
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        failure {
+            notifySlack("❌ Pipeline failed at ${env.STAGE_NAME}: build #${BUILD_NUMBER}")
+            notifyEmail("Pipeline Failure", "Pipeline failed at stage: ${env.STAGE_NAME}")
+        }
+    }
+}
+
+def notifySlack(String message) {
+    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK_URL')]) {
+        slackSend(color: 'good', message: "${message} (<${BUILD_URL}|Open>)", webhookURL: "${SLACK_WEBHOOK_URL}")
+    }
+}
+
+def notifyEmail(String subject, String body) {
+    emailext(
+        subject: "${subject} - ${env.JOB_NAME} #${BUILD_NUMBER}",
+        body: "${body}\n\nView build: ${BUILD_URL}",
+        to: "${env.CHANGE_AUTHOR_EMAIL ?: 'devops@enterprise-platform.local'}"
+    )
+}

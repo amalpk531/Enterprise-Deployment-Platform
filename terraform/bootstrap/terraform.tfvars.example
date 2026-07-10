@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars and adjust if needed.
+aws_region   = "ap-south-1"
+project_name = "enterprise-deployment-platform"

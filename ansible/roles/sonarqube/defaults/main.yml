@@ -1,0 +1,6 @@
+---
+sonarqube_version: "2026-lta-community"
+postgres_version: "15"
+sonarqube_db_user: "sonar"
+sonarqube_db_password: "sonar"
+sonarqube_db_name: "sonarqube"
