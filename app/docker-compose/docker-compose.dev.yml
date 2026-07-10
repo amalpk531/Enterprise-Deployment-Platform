@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  app:
+    image: amalpk531/enterprise-app:${IMAGE_TAG:-latest}
+    container_name: enterprise-app
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - MONGO_URI=mongodb://mongo:27017/enterprise_app
+      - JWT_SECRET=dev-jwt-secret-change-in-prod
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - enterprise-network
+
+  mongo:
+    image: mongo:7.0
+    container_name: enterprise-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - enterprise-network
+
+volumes:
+  mongo-data:
+
+networks:
+  enterprise-network:
+    driver: bridge

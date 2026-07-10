@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: local-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - local-mongo-data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: local-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - MONGO_URI=mongodb://mongo:27017/enterprise_app
+      - JWT_SECRET=local-jwt-secret
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: local-frontend
+    ports:
+      - "3000:8080"
+    depends_on:
+      - backend
+
+volumes:
+  local-mongo-data:
