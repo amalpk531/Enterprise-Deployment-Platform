@@ -94,7 +94,7 @@ stage('SonarQube Scan') {
         stage('Docker Build') {
             steps {
                 script {
-                    dockerImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}", "-f app/Dockerfile .")
+                    def dockerImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}","-f app/Dockerfile .")
                 }
             }
         }

@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for MERN application
 # Stage 1: Build frontend
-FROM node:18-alpine AS frontend-build
+FROM node:22-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY app/frontend/package*.json ./
 RUN npm ci
@@ -8,14 +8,14 @@ COPY app/frontend/ ./
 RUN npm run build
 
 # Stage 2: Build backend
-FROM node:18-alpine AS backend-build
+FROM node:22-alpine AS backend-build
 WORKDIR /app/backend
 COPY app/backend/package*.json ./
 RUN npm ci --only=production
 COPY app/backend/ ./
 
 # Stage 3: Production image with Nginx serving frontend and proxying API
-FROM nginx:1.25-alpine
+FROM nginx:1.28-alpine
 
 # Install Node.js for backend runtime
 RUN apk add --no-cache nodejs npm
