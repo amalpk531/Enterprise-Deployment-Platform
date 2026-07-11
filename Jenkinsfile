@@ -1,8 +1,27 @@
+// =====================================================================
+// Enterprise Deployment Platform — CI/CD Pipeline
+//
+// Flow: Checkout -> Build -> Unit Tests -> SonarQube -> Quality Gate ->
+//       Trivy FS Scan -> Docker Build -> Trivy Image Scan -> Push ->
+//       Deploy Dev -> Manual Approval -> Update GitOps -> Verify Prod
+//
+// Requires these Jenkins Global Environment variables (Manage Jenkins ->
+// System -> Global properties -> Environment variables):
+//   DOCKERHUB_USERNAME, DEV_DEPLOY_HOST, NOTIFY_EMAIL
+//
+// Requires these credentials (Manage Jenkins -> Credentials):
+//   dockerhub-token      (Username with password: amalpk531 / <token>)
+//   github-token         (Secret text: GitHub fine-grained PAT)
+//   dev-deploy-ssh-key   (SSH username with private key: ubuntu)
+//   eks-kubeconfig       (Secret file: kubeconfig for prod EKS cluster)
+//   sonarqube-token      (configured against the 'SonarQube' server in
+//                         Manage Jenkins -> System -> SonarQube servers)
+// =====================================================================
+
 pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USERNAME = 'amalpk531'
         IMAGE_NAME          = 'enterprise-app'
         FULL_IMAGE          = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
 
@@ -10,28 +29,33 @@ pipeline {
         APP_REPO            = 'Enterprise-Deployment-Platform'
         GITOPS_REPO         = 'Enterprise-Deployment-Platform-gitops'
 
-        // TODO: hardcoded for capstone scope — replace with Terraform output / SSM lookup later
-        // DEV_DEPLOY_HOST     = '3.110.94.160'
-        DEV_DEPLOY_HOST     = '13.235.67.107'
         DEV_DEPLOY_USER     = 'ubuntu'
-
         SONAR_PROJECT_KEY   = 'enterprise-app'
-        NOTIFY_EMAIL        = 'amal18120007@gmail.com'
+
+        // Matches docker-compose.dev.yml: host port 80 -> container 8080,
+        // healthcheck path /api/health
+        HEALTHCHECK_URL     = "http://${DEV_DEPLOY_HOST}/api/health"
+
+        // How many old local image tags to retain on the Jenkins agent
+        IMAGE_RETENTION     = '5'
     }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
         disableConcurrentBuilds()
+        ansiColor('xterm')
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
                 script {
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
+                echo "Checked out commit ${env.GIT_COMMIT_SHORT}"
             }
         }
 
@@ -60,24 +84,25 @@ pipeline {
             }
         }
 
-stage('SonarQube Scan') {
-    steps {
-        withSonarQubeEnv('SonarQube') {
-            script {
-                def scannerHome = tool 'SonarScanner'
-                sh """
-                    cd app && ${scannerHome}/bin/sonar-scanner \
-                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                      -Dsonar.sources=backend,frontend/src \
-                      -Dsonar.tests=backend/tests \
-                      -Dsonar.test.inclusions=backend/tests/**/*.js \
-                      -Dsonar.exclusions=backend/tests/**,node_modules/**,dist/**,build/**,.next/** \
-                      -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
-                """
+        stage('SonarQube Scan') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    script {
+                        def scannerHome = tool 'SonarScanner'
+                        sh """
+                            cd app && ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                              -Dsonar.sources=backend,frontend/src \
+                              -Dsonar.tests=backend/tests \
+                              -Dsonar.test.inclusions=backend/tests/**/*.js \
+                              -Dsonar.exclusions=backend/tests/**,node_modules/**,dist/**,build/**,.next/** \
+                              -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
+                        """
+                    }
+                }
             }
         }
-    }
-}
+
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -94,9 +119,10 @@ stage('SonarQube Scan') {
 
         stage('Docker Build') {
             steps {
-                script {
-                    def dockerImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}","-f app/Dockerfile .")
-                }
+                sh """
+                    docker build -f app/Dockerfile -t ${FULL_IMAGE}:${BUILD_NUMBER} .
+                """
+                echo "Built image ${FULL_IMAGE}:${BUILD_NUMBER}"
             }
         }
 
@@ -108,40 +134,67 @@ stage('SonarQube Scan') {
 
         stage('Push to Docker Hub') {
             steps {
-                script {
-                    docker.withRegistry('', 'dockerhub-token') {
-                        dockerImage.push("${BUILD_NUMBER}")
-                        dockerImage.push("latest")
-                    }
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-token',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    '''
+                }
+                sh """
+                    docker tag ${FULL_IMAGE}:${BUILD_NUMBER} ${FULL_IMAGE}:latest
+                    docker push ${FULL_IMAGE}:${BUILD_NUMBER}
+                    docker push ${FULL_IMAGE}:latest
+                """
+            }
+            post {
+                always {
+                    sh 'docker logout || true'
                 }
             }
         }
 
         stage('Deploy to Dev') {
             steps {
-                sshagent(['dev-deploy-ssh-key']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
-                          "cd /opt/enterprise-app && \
-                           IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml pull && \
-                           IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml up -d"
-                    """
+                retry(3) {
+                    sshagent(['dev-deploy-ssh-key']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
+                              "cd /opt/enterprise-app && \
+                               IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml pull && \
+                               IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml up -d"
+                        """
+                    }
                 }
             }
             post {
                 success {
-                    notifyEmail("Dev Deployment Success", "Application deployed to dev environment.")
+                    notifyEmail("Dev Deployment Success", "Build #${BUILD_NUMBER} (${env.GIT_COMMIT_SHORT}) deployed to dev.")
                 }
                 failure {
-                    notifyEmail("Dev Deployment Failure", "Dev deployment failed. Check Jenkins logs.")
+                    notifyEmail("Dev Deployment Failure", "Dev deployment failed for build #${BUILD_NUMBER}. Check Jenkins logs.")
                 }
+            }
+        }
+
+        stage('Dev Health Check') {
+            steps {
+                retry(5) {
+                    sh """
+                        sleep 5
+                        curl -fsS --max-time 10 ${HEALTHCHECK_URL}
+                    """
+                }
+                echo "Dev environment healthy at ${HEALTHCHECK_URL}"
             }
         }
 
         stage('Manual Approval') {
             steps {
                 script {
-                    notifyEmail("Awaiting Approval", "Please approve production deployment in Jenkins.")
+                    notifyEmail("Awaiting Approval", "Build #${BUILD_NUMBER} is deployed to dev and awaiting production approval.")
                     timeout(time: 30, unit: 'MINUTES') {
                         input message: 'Deploy to Production?', ok: 'Approve', submitterParameter: 'APPROVER'
                     }
@@ -152,28 +205,28 @@ stage('SonarQube Scan') {
             }
         }
 
-        stage('Update Prod Git Tag') {
+        stage('Update GitOps') {
             steps {
                 withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
-                    sh '''
+                    sh """
                         rm -rf gitops-repo
-                        git clone --depth 1 https://${GITHUB_TOKEN}@github.com/'''+"${GITHUB_ORG}/${GITOPS_REPO}"+'''.git gitops-repo
+                        git clone --depth 1 https://x-access-token:\${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${GITOPS_REPO}.git gitops-repo
                         cd gitops-repo
                         git config user.email "jenkins@enterprise-platform.local"
                         git config user.name "Jenkins CI"
                         sed -i "s/^  tag: .*/  tag: \\"${BUILD_NUMBER}\\"/" helm/enterprise-app/values-prod.yaml
                         git add helm/enterprise-app/values-prod.yaml
                         git diff --cached --quiet || git commit -m "ci: bump prod image tag to ${BUILD_NUMBER} [skip ci]"
-                        git push https://${GITHUB_TOKEN}@github.com/'''+"${GITHUB_ORG}/${GITOPS_REPO}"+'''.git main
-                    '''
+                        git push https://x-access-token:\${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${GITOPS_REPO}.git main
+                    """
                 }
             }
         }
 
         stage('Verify Prod Deployment') {
             steps {
-                // NOTE: requires Jenkins node's public IP added to the EKS cluster's
-                // public access CIDR allowlist, or this kubectl call will time out.
+                // Requires the Jenkins node's public IP on the EKS cluster's
+                // public access CIDR allowlist, or kubectl will time out.
                 withCredentials([kubeconfigFile(credentialsId: 'eks-kubeconfig', variable: 'KUBECONFIG')]) {
                     sh """
                         kubectl -n argocd annotate application enterprise-app argocd.argoproj.io/refresh=hard --overwrite
@@ -185,10 +238,10 @@ stage('SonarQube Scan') {
             }
             post {
                 success {
-                    notifyEmail("Production Deployment Success", "Application deployed to production via Argo CD.")
+                    notifyEmail("Production Deployment Success", "Build #${BUILD_NUMBER} deployed to production via Argo CD.")
                 }
                 failure {
-                    notifyEmail("Production Deployment Failure", "Production deployment verification failed.")
+                    notifyEmail("Production Deployment Failure", "Production deployment verification failed for build #${BUILD_NUMBER}.")
                 }
             }
         }
@@ -196,18 +249,28 @@ stage('SonarQube Scan') {
 
     post {
         always {
+            // Keep only the N most recent local image tags for this app
+            // so the Jenkins agent's disk doesn't fill up over time.
+            sh """
+                docker images ${FULL_IMAGE} --format '{{.Tag}}' \
+                  | grep -E '^[0-9]+\$' \
+                  | sort -rn \
+                  | tail -n +\$((${IMAGE_RETENTION} + 1)) \
+                  | xargs -r -I {} docker rmi ${FULL_IMAGE}:{} || true
+                docker image prune -f || true
+            """
             cleanWs()
         }
         failure {
-            notifyEmail("Pipeline Failure", "Pipeline failed at stage: ${env.STAGE_NAME}")
+            notifyEmail("Pipeline Failure", "Pipeline failed at stage: ${env.STAGE_NAME} (build #${BUILD_NUMBER}).")
         }
     }
 }
 
 def notifyEmail(String subject, String body) {
     emailext(
-        subject: "${subject} - ${env.JOB_NAME} #${BUILD_NUMBER}",
-        body: "${body}\n\nView build: ${BUILD_URL}",
+        subject: "${subject} - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+        body: "${body}\n\nView build: ${env.BUILD_URL}",
         to: "${env.CHANGE_AUTHOR_EMAIL ?: env.NOTIFY_EMAIL}"
     )
 }
