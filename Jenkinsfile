@@ -11,7 +11,8 @@ pipeline {
         GITOPS_REPO         = 'Enterprise-Deployment-Platform-gitops'
 
         // TODO: hardcoded for capstone scope — replace with Terraform output / SSM lookup later
-        DEV_DEPLOY_HOST     = '3.110.94.160'
+        // DEV_DEPLOY_HOST     = '3.110.94.160'
+        DEV_DEPLOY_HOST     = '13.235.67.107'
         DEV_DEPLOY_USER     = 'ubuntu'
 
         SONAR_PROJECT_KEY   = 'enterprise-app'
