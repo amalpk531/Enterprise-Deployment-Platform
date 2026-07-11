@@ -1,23 +1,3 @@
-// =====================================================================
-// Enterprise Deployment Platform — CI/CD Pipeline
-//
-// Flow: Checkout -> Build -> Unit Tests -> SonarQube -> Quality Gate ->
-//       Trivy FS Scan -> Docker Build -> Trivy Image Scan -> Push ->
-//       Deploy Dev -> Manual Approval -> Update GitOps -> Verify Prod
-//
-// Requires these Jenkins Global Environment variables (Manage Jenkins ->
-// System -> Global properties -> Environment variables):
-//   DOCKERHUB_USERNAME, DEV_DEPLOY_HOST, NOTIFY_EMAIL
-//
-// Requires these credentials (Manage Jenkins -> Credentials):
-//   dockerhub-token      (Username with password: amalpk531 / <token>)
-//   github-token         (Secret text: GitHub fine-grained PAT)
-//   dev-deploy-ssh-key   (SSH username with private key: ubuntu)
-//   eks-kubeconfig       (Secret file: kubeconfig for prod EKS cluster)
-//   sonarqube-token      (configured against the 'SonarQube' server in
-//                         Manage Jenkins -> System -> SonarQube servers)
-// =====================================================================
-
 pipeline {
     agent any
 
@@ -32,11 +12,8 @@ pipeline {
         DEV_DEPLOY_USER     = 'ubuntu'
         SONAR_PROJECT_KEY   = 'enterprise-app'
 
-        // Matches docker-compose.dev.yml: host port 80 -> container 8080,
-        // healthcheck path /api/health
         HEALTHCHECK_URL     = "http://${DEV_DEPLOY_HOST}/api/health"
 
-        // How many old local image tags to retain on the Jenkins agent
         IMAGE_RETENTION     = '5'
     }
 
@@ -267,10 +244,10 @@ pipeline {
             }
         }
 
+    }
+
     post {
         always {
-            // Keep only the N most recent local image tags for this app
-            // so the Jenkins agent's disk doesn't fill up over time.
             sh """
                 docker images ${FULL_IMAGE} --format '{{.Tag}}' \
                   | grep -E '^[0-9]+\$' \
@@ -293,5 +270,4 @@ def notifyEmail(String subject, String body) {
         body: "${body}\n\nView build: ${env.BUILD_URL}",
         to: "${env.CHANGE_AUTHOR_EMAIL ?: env.NOTIFY_EMAIL}"
     )
-}
 }
