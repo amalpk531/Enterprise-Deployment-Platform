@@ -294,3 +294,4 @@ def notifyEmail(String subject, String body) {
         to: "${env.CHANGE_AUTHOR_EMAIL ?: env.NOTIFY_EMAIL}"
     )
 }
+}
