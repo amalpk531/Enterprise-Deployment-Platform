@@ -140,3 +140,10 @@
     name: nodejs
     state: present
     update_cache: yes
+
+    #---------------------------------------------------------------
+    #npm
+    #---------------------------------------------------------------
+- name: Verify npm installation
+  command: npm --version
+  changed_when: false
