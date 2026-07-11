@@ -228,27 +228,44 @@ pipeline {
 
         stage('Verify Prod Deployment') {
             steps {
-                // Requires the Jenkins node's public IP on the EKS cluster's
-                // public access CIDR allowlist, or kubectl will time out.
-                withCredentials([kubeconfigFile(credentialsId: 'eks-kubeconfig', variable: 'KUBECONFIG')]) {
-                    sh """
-                        kubectl -n argocd annotate application enterprise-app argocd.argoproj.io/refresh=hard --overwrite
-                        sleep 30
-                        kubectl rollout status deployment/enterprise-app -n enterprise-app-prod --timeout=600s
-                        kubectl get pods -n enterprise-app-prod -o wide
-                    """
-                }
+                sh """
+                    aws eks update-kubeconfig \
+                        --region ap-south-1 \
+                        --name enterprise-deployment-platform-prod \
+                        --alias enterprise-prod
+
+                    kubectl config current-context
+
+                    kubectl -n argocd annotate application enterprise-app \
+                        argocd.argoproj.io/refresh=hard \
+                        --overwrite
+
+                    kubectl rollout status deployment/enterprise-app \
+                        -n enterprise-app-prod \
+                        --timeout=600s
+
+                    kubectl get pods -n enterprise-app-prod -o wide
+
+                    kubectl get svc -n enterprise-app-prod
+
+                    kubectl get ingress -n enterprise-app-prod
+                """
             }
             post {
                 success {
-                    notifyEmail("Production Deployment Success", "Build #${BUILD_NUMBER} deployed to production via Argo CD.")
+                    notifyEmail(
+                        "Production Deployment Success",
+                        "Build #${BUILD_NUMBER} deployed successfully to EKS via ArgoCD."
+                    )
                 }
                 failure {
-                    notifyEmail("Production Deployment Failure", "Production deployment verification failed for build #${BUILD_NUMBER}.")
+                    notifyEmail(
+                        "Production Deployment Failure",
+                        "Production deployment verification failed for build #${BUILD_NUMBER}."
+                    )
                 }
             }
         }
-    }
 
     post {
         always {

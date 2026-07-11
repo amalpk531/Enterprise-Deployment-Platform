@@ -38,10 +38,10 @@ module "eks" {
   vpc_id              = module.vpc.vpc_id
   public_subnet_ids   = module.vpc.public_subnet_ids
   private_subnet_ids  = module.vpc.private_subnet_ids
-  kubernetes_version  = "1.29"
+  kubernetes_version  = "1.33"
   node_instance_types = ["t3.medium"]
   desired_size        = 2
   min_size            = 1
-  max_size            = 3
+  max_size            = 2
   public_access_cidrs = [var.allowed_eks_access_cidr]
 }
