@@ -160,10 +160,14 @@ pipeline {
                 retry(3) {
                     sshagent(['dev-deploy-ssh-key']) {
                         sh """
-                            ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
-                              "cd /opt/enterprise-app && \
-                               IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml pull && \
-                               IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml up -d"
+                        ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
+                        "mkdir -p /opt/enterprise-app"
+                        scp -o StrictHostKeyChecking=no app/docker-compose/docker-compose.dev.yml \
+                        ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST}:/opt/enterprise-app/docker-compose.dev.yml
+                        ssh -o StrictHostKeyChecking=no ${DEV_DEPLOY_USER}@${DEV_DEPLOY_HOST} \
+                        "cd /opt/enterprise-app && \
+                        IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml pull && \
+                        IMAGE_TAG=${BUILD_NUMBER} docker compose -f docker-compose.dev.yml up -d"
                         """
                     }
                 }
