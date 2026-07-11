@@ -15,10 +15,12 @@ RUN npm ci --only=production
 COPY app/backend/ ./
 
 # Stage 3: Production image with Nginx serving frontend and proxying API
-FROM nginx:1.28-alpine
+FROM nginx:1.29-alpine
 
-# Install Node.js for backend runtime
-RUN apk add --no-cache nodejs npm
+RUN apk update && \
+    apk upgrade --no-cache && \
+    apk add --no-cache nodejs npm && \
+    rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
