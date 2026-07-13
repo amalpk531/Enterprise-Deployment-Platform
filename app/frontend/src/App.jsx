@@ -179,7 +179,7 @@ function App() {
         <div className="hero-panel">
           <div className="hero-copy">
             <p className="eyebrow">Finance workspace</p>
-            <h1>Control your cash flow with clarity</h1>
+            <h1>Control your cash flow </h1>
             <p className="subtle">A polished finance tracker built for daily planning, smart oversight, and calm decision-making.</p>
           </div>
           <div className="hero-actions">
